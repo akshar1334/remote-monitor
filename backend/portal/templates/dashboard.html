@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – Remote Monitor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Dashboard</h1>
+  <div class="header-stats">
+    <div class="stat-pill online">🟢 <span id="online-count">0</span> Online</div>
+    <div class="stat-pill offline">⚫ <span id="offline-count">0</span> Offline</div>
+  </div>
+</div>
+
+<div class="ws-status" id="ws-status">⚡ Connecting…</div>
+
+<div class="agents-grid" id="agents-grid">
+  <div class="loading-spinner">Loading agents…</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PAGE = 'dashboard';
+
+async function initDashboard() {
+  await requireAuth();
+  const me = await getMe();
+
+  // Initial agent list
+  const agents = await apiFetch('/api/agents');
+  renderAgents(agents);
+
+  // WebSocket for live updates
+  const token = getCookie('access_token');
+  const ws = openPortalWS(token, (msg) => {
+    if (msg.type === 'agent_snapshot') renderAgents(msg.agents);
+    if (msg.type === 'agent_status') updateAgentStatus(msg.agent_id, msg.online, msg.hostname);
+    if (msg.type === 'agent_data') updateAgentData(msg.agent_id, msg.data);
+  });
+}
+
+function renderAgents(agents) {
+  const grid = document.getElementById('agents-grid');
+  if (!agents.length) { grid.innerHTML = '<p class="empty-state">No agents registered yet.</p>'; return; }
+  grid.innerHTML = agents.map(agentCard).join('');
+  updateCounts(agents);
+}
+
+function agentCard(ag) {
+  const statusClass = ag.online ? 'online' : 'offline';
+  const statusIcon  = ag.online ? '🟢' : '⚫';
+  return `
+    <div class="agent-card ${statusClass}" id="card-${ag.id}" onclick="window.location='/agent/${ag.id}'">
+      <div class="agent-card-header">
+        <span class="agent-status-icon">${statusIcon}</span>
+        <span class="agent-hostname">${ag.hostname || ag.id}</span>
+      </div>
+      <div class="agent-card-body">
+        <div class="agent-id">${ag.id.slice(0,8)}…</div>
+        <div class="agent-seen">Last seen: ${ag.last_seen ? new Date(ag.last_seen).toLocaleString() : 'Never'}</div>
+      </div>
+    </div>`;
+}
+
+function updateAgentStatus(agentId, online, hostname) {
+  let card = document.getElementById(`card-${agentId}`);
+  if (!card) {
+    const grid = document.getElementById('agents-grid');
+    const el = document.createElement('div');
+    el.innerHTML = agentCard({id: agentId, online, hostname, last_seen: new Date().toISOString()});
+    grid.appendChild(el.firstElementChild);
+    card = document.getElementById(`card-${agentId}`);
+  }
+  const icon = online ? '🟢' : '⚫';
+  card.className = `agent-card ${online ? 'online' : 'offline'}`;
+  card.querySelector('.agent-status-icon').textContent = icon;
+  if (hostname) card.querySelector('.agent-hostname').textContent = hostname;
+  card.querySelector('.agent-seen').textContent = `Last seen: ${new Date().toLocaleString()}`;
+  // Recount
+  const allCards = document.querySelectorAll('.agent-card');
+  const onlineN = document.querySelectorAll('.agent-card.online').length;
+  document.getElementById('online-count').textContent = onlineN;
+  document.getElementById('offline-count').textContent = allCards.length - onlineN;
+}
+
+function updateAgentData(agentId, data) {
+  const card = document.getElementById(`card-${agentId}`);
+  if (!card) return;
+  const si = data.system_info || {};
+  let extra = card.querySelector('.agent-extra');
+  if (!extra) { extra = document.createElement('div'); extra.className = 'agent-extra'; card.querySelector('.agent-card-body').appendChild(extra); }
+  extra.innerHTML = `CPU: ${si.cpu_percent ?? '?'}% &nbsp;|&nbsp; RAM: ${si.ram_percent ?? '?'}%`;
+}
+
+function updateCounts(agents) {
+  const on = agents.filter(a => a.online).length;
+  document.getElementById('online-count').textContent = on;
+  document.getElementById('offline-count').textContent = agents.length - on;
+}
+
+initDashboard();
+</script>
+{% endblock %}

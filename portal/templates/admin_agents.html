@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Manage Agents – Remote Monitor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Manage Agents</h1>
+  <button class="btn btn-primary" onclick="showModal('create-agent-modal')">+ Register Agent</button>
+</div>
+
+<div class="table-wrap">
+  <table class="data-table">
+    <thead><tr><th>ID</th><th>Hostname</th><th>Status</th><th>Last Seen</th><th>Token</th><th>Actions</th></tr></thead>
+    <tbody id="agents-tbody"><tr><td colspan="6">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<!-- Token reveal modal -->
+<div class="modal-overlay" id="token-modal" style="display:none">
+  <div class="modal">
+    <h2>Agent Token</h2>
+    <p>Copy this token into the agent's <code>config.json</code> file. It will not be shown again.</p>
+    <div class="token-box" id="token-value"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="copyToken()">Copy</button>
+      <button class="btn" onclick="hideModal('token-modal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create Agent Modal -->
+<div class="modal-overlay" id="create-agent-modal" style="display:none">
+  <div class="modal">
+    <h2>Register New Agent</h2>
+    <form id="create-agent-form">
+      <div class="form-group"><label>Hostname / Label</label><input type="text" name="hostname" placeholder="e.g. WIN-SERVER-01"/></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" onclick="hideModal('create-agent-modal')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Register</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _newToken = '';
+
+async function loadAgents() {
+  await requireAuth('admin');
+  const agents = await apiFetch('/api/agents');
+  const tbody = document.getElementById('agents-tbody');
+  tbody.innerHTML = agents.map(ag => `
+    <tr>
+      <td><code>${ag.id.slice(0,8)}…</code></td>
+      <td>${ag.hostname}</td>
+      <td><span class="status-dot ${ag.online?'online':'offline'}">${ag.online?'🟢 Online':'⚫ Offline'}</span></td>
+      <td>${ag.last_seen ? new Date(ag.last_seen).toLocaleString() : 'Never'}</td>
+      <td><em>hidden</em></td>
+      <td>
+        <button class="btn btn-danger btn-sm" onclick="deleteAgent('${ag.id}')">Delete</button>
+      </td>
+    </tr>`).join('');
+}
+
+document.getElementById('create-agent-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const res = await fetch('/api/agents', { method: 'POST', body: fd, credentials: 'include' });
+  const data = await res.json();
+  hideModal('create-agent-modal');
+  e.target.reset();
+  _newToken = data.token;
+  document.getElementById('token-value').textContent = data.token;
+  showModal('token-modal');
+  loadAgents();
+});
+
+async function deleteAgent(id) {
+  if (!confirm('Delete this agent?')) return;
+  await apiFetch(`/api/agents/${id}`, { method: 'DELETE' });
+  loadAgents();
+}
+
+function copyToken() {
+  navigator.clipboard.writeText(_newToken);
+  alert('Token copied!');
+}
+
+loadAgents();
+</script>
+{% endblock %}

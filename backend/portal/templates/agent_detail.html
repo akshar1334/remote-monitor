@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block title %}Agent Detail – Remote Monitor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <a href="/dashboard" class="back-link">← Dashboard</a>
+  <h1 id="agent-title">Agent Details</h1>
+  <div id="agent-badge" class="status-badge"></div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs">
+  <button class="tab-btn active" onclick="showTab('system')">System</button>
+  <button class="tab-btn" onclick="showTab('processes')">Processes</button>
+  <button class="tab-btn" onclick="showTab('storage')">Storage</button>
+  <button class="tab-btn" onclick="showTab('network')">Network</button>
+  <button class="tab-btn" onclick="showTab('users')">Users</button>
+  <button class="tab-btn" onclick="showTab('apps')">Apps</button>
+  <button class="tab-btn admin-only" id="commands-tab" onclick="showTab('commands')">Commands</button>
+</div>
+
+<!-- System Info -->
+<div id="tab-system" class="tab-pane active">
+  <div class="info-grid" id="system-info-grid">Loading…</div>
+</div>
+
+<!-- Processes -->
+<div id="tab-processes" class="tab-pane">
+  <input type="text" id="proc-filter" placeholder="Filter processes…" class="filter-input" oninput="filterTable('proc-table', this.value)"/>
+  <div class="table-wrap">
+    <table class="data-table" id="proc-table">
+      <thead><tr><th>PID</th><th>Name</th><th>User</th><th>CPU%</th><th>RAM%</th><th>Status</th><th class="admin-only">Action</th></tr></thead>
+      <tbody id="proc-tbody"><tr><td colspan="7">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Storage -->
+<div id="tab-storage" class="tab-pane">
+  <div id="storage-cards"></div>
+</div>
+
+<!-- Network -->
+<div id="tab-network" class="tab-pane">
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Local</th><th>Remote</th><th>Status</th><th>PID</th></tr></thead>
+      <tbody id="net-tbody"><tr><td colspan="4">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Users -->
+<div id="tab-users" class="tab-pane">
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>User</th><th>Terminal</th><th>Host</th><th>Started</th></tr></thead>
+      <tbody id="users-tbody"><tr><td colspan="4">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Apps -->
+<div id="tab-apps" class="tab-pane">
+  <input type="text" id="apps-filter" placeholder="Filter apps…" class="filter-input" oninput="filterTable('apps-table', this.value)"/>
+  <div class="table-wrap">
+    <table class="data-table" id="apps-table">
+      <thead><tr><th>Name</th><th>Version</th></tr></thead>
+      <tbody id="apps-tbody"><tr><td colspan="2">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Commands (Admin) -->
+<div id="tab-commands" class="tab-pane">
+  <div class="commands-panel">
+    <h3>Send Command to Agent</h3>
+    <div class="command-buttons">
+      <button class="btn btn-primary" onclick="sendCommand('refresh')">🔄 Refresh Data</button>
+      <button class="btn btn-warning" onclick="sendCommand('ping')">🏓 Ping Agent</button>
+    </div>
+    <div id="command-log" class="command-log"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const AGENT_ID = "{{ agent_id }}";
+let currentData = {};
+let isAdmin = false;
+
+function showTab(name) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`tab-${name}`).classList.add('active');
+  event.target.classList.add('active');
+}
+
+async function initAgentDetail() {
+  await requireAuth();
+  const me = await getMe();
+  isAdmin = me.role === 'admin';
+
+  if (!isAdmin) {
+    document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
+  }
+
+  // Load stored data
+  try {
+    const data = await apiFetch(`/api/agents/${AGENT_ID}/data`);
+    renderAll(data);
+  } catch(e) { console.error(e); }
+
+  // Live updates via WebSocket
+  const token = getCookie('access_token');
+  openPortalWS(token, (msg) => {
+    if (msg.type === 'agent_data' && msg.agent_id === AGENT_ID) renderAll(msg.data);
+    if (msg.type === 'agent_status' && msg.agent_id === AGENT_ID) updateBadge(msg.online);
+    if (msg.type === 'command_result' && msg.agent_id === AGENT_ID) logCommand(msg.data);
+    if (msg.type === 'pong' && msg.agent_id === AGENT_ID) logCommand({action:'pong', success:true});
+  });
+}
+
+function renderAll(data) {
+  currentData = data;
+  if (data.system_info) renderSystemInfo(data.system_info);
+  if (data.processes)   renderProcesses(data.processes);
+  if (data.storage)     renderStorage(data.storage);
+  if (data.network)     renderNetwork(data.network);
+  if (data.users)       renderUsers(data.users);
+  if (data.installed_apps) renderApps(data.installed_apps);
+
+  const si = data.system_info || {};
+  document.getElementById('agent-title').textContent = si.hostname || AGENT_ID;
+}
+
+function renderSystemInfo(si) {
+  const items = [
+    ['Hostname', si.hostname], ['IP Address', si.ip_address],
+    ['OS', `${si.os} ${si.os_release}`], ['OS Version', si.os_version],
+    ['Architecture', si.architecture], ['Processor', si.processor],
+    ['CPU Cores (Logical)', si.cpu_count_logical], ['CPU Cores (Physical)', si.cpu_count_physical],
+    ['CPU Usage', `${si.cpu_percent}%`], ['CPU Freq', si.cpu_freq_mhz ? `${si.cpu_freq_mhz} MHz` : 'N/A'],
+    ['RAM Total', `${si.ram_total_mb} MB`], ['RAM Used', `${si.ram_used_mb} MB (${si.ram_percent}%)`],
+    ['Swap Total', `${si.swap_total_mb} MB`], ['Swap Used', `${si.swap_used_mb} MB`],
+    ['Boot Time', si.boot_time], ['Uptime', formatUptime(si.uptime_seconds)],
+  ];
+  document.getElementById('system-info-grid').innerHTML = items.map(([k,v]) =>
+    `<div class="info-item"><div class="info-label">${k}</div><div class="info-value">${v ?? 'N/A'}</div></div>`
+  ).join('');
+}
+
+function formatUptime(s) {
+  if (!s) return 'N/A';
+  const d = Math.floor(s/86400), h = Math.floor((s%86400)/3600), m = Math.floor((s%3600)/60);
+  return `${d}d ${h}h ${m}m`;
+}
+
+function renderProcesses(procs) {
+  const tbody = document.getElementById('proc-tbody');
+  tbody.innerHTML = procs.map(p => `
+    <tr>
+      <td>${p.pid}</td><td>${p.name}</td><td>${p.username||''}</td>
+      <td><span class="${p.cpu_percent>50?'warn':''}">${p.cpu_percent}</span></td>
+      <td>${p.memory_percent}</td><td>${p.status}</td>
+      <td class="admin-only">${isAdmin ? `<button class="btn btn-danger btn-xs" onclick="killProcess(${p.pid})">Kill</button>` : ''}</td>
+    </tr>`).join('');
+  if (!isAdmin) document.querySelectorAll('#proc-table .admin-only').forEach(el => el.style.display='none');
+}
+
+function renderStorage(parts) {
+  document.getElementById('storage-cards').innerHTML = parts.map(p => `
+    <div class="storage-card">
+      <div class="storage-header"><strong>${p.device}</strong> → ${p.mountpoint} <span class="fstype">${p.fstype}</span></div>
+      <div class="progress-bar"><div class="progress-fill ${p.percent>85?'danger':p.percent>60?'warn':''}" style="width:${p.percent}%"></div></div>
+      <div class="storage-stats">${p.used_gb}GB used / ${p.total_gb}GB total (${p.percent}%) — ${p.free_gb}GB free</div>
+    </div>`).join('');
+}
+
+function renderNetwork(net) {
+  document.getElementById('net-tbody').innerHTML = (net.connections||[]).map(c =>
+    `<tr><td>${c.laddr}</td><td>${c.raddr}</td><td>${c.status}</td><td>${c.pid||''}</td></tr>`
+  ).join('') || '<tr><td colspan="4">No connections</td></tr>';
+}
+
+function renderUsers(users) {
+  document.getElementById('users-tbody').innerHTML = users.length
+    ? users.map(u => `<tr><td>${u.name}</td><td>${u.terminal||''}</td><td>${u.host||''}</td><td>${u.started||''}</td></tr>`).join('')
+    : '<tr><td colspan="4">No users logged in</td></tr>';
+}
+
+function renderApps(apps) {
+  document.getElementById('apps-tbody').innerHTML = apps.length
+    ? apps.map(a => `<tr><td>${a.name}</td><td>${a.version}</td></tr>`).join('')
+    : '<tr><td colspan="2">No app data available</td></tr>';
+}
+
+function updateBadge(online) {
+  const b = document.getElementById('agent-badge');
+  b.textContent = online ? '🟢 Online' : '⚫ Offline';
+  b.className = `status-badge ${online ? 'online' : 'offline'}`;
+}
+
+async function killProcess(pid) {
+  if (!confirm(`Kill process ${pid}?`)) return;
+  await sendWsCommand({action:'kill_process', pid, agent_id: AGENT_ID});
+}
+
+async function sendCommand(action) {
+  logCommand({action, sent: true});
+  await sendWsCommand({action, agent_id: AGENT_ID});
+}
+
+function logCommand(data) {
+  const log = document.getElementById('command-log');
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  entry.textContent = `[${new Date().toLocaleTimeString()}] ${JSON.stringify(data)}`;
+  log.prepend(entry);
+}
+
+function filterTable(tableId, query) {
+  const q = query.toLowerCase();
+  document.querySelectorAll(`#${tableId} tbody tr`).forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+let _ws;
+function sendWsCommand(cmd) {
+  if (_ws && _ws.readyState === WebSocket.OPEN) _ws.send(JSON.stringify(cmd));
+}
+function openPortalWS(token, handler) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  _ws = new WebSocket(`${proto}://${location.host}/ws/portal?token=${token}`);
+  _ws.onopen  = () => setWsStatus('connected');
+  _ws.onclose = () => { setWsStatus('disconnected'); setTimeout(() => openPortalWS(token, handler), 5000); };
+  _ws.onerror = () => setWsStatus('error');
+  _ws.onmessage = e => { try { handler(JSON.parse(e.data)); } catch {} };
+  return _ws;
+}
+function setWsStatus(s) {
+  const el = document.getElementById('ws-status');
+  if (!el) return;
+  const labels = {connected:'⚡ Live', disconnected:'🔴 Disconnected', error:'⚠️ Error', connecting:'⚡ Connecting…'};
+  el.textContent = labels[s] || s;
+  el.className = `ws-status ${s}`;
+}
+
+initAgentDetail();
+</script>
+{% endblock %}

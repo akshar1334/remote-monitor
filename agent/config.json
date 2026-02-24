@@ -1,0 +1,8 @@
+{
+  "server_url": "ws://YOUR_SERVER_IP:8000/ws/agent",
+  "agent_token": "PASTE_TOKEN_FROM_ADMIN_PORTAL_HERE",
+  "agent_id": "UNIQUE_AGENT_UUID_HERE",
+  "reconnect_interval": 10,
+  "heartbeat_interval": 30,
+  "data_refresh_interval": 60
+}

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}Remote Monitor{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css"/>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <nav class="navbar" id="navbar" style="display:none">
+    <div class="nav-brand">🖥️ RemoteMonitor</div>
+    <div class="nav-links">
+      <a href="/dashboard">Dashboard</a>
+      <span id="nav-admin-links" style="display:none">
+        <a href="/admin/agents">Agents</a>
+        <a href="/admin/users">Users</a>
+      </span>
+    </div>
+    <div class="nav-user">
+      <span id="nav-username"></span>
+      <button onclick="logout()" class="btn btn-sm">Logout</button>
+    </div>
+  </nav>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="/static/js/app.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,13 @@
+version: "3.9"
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-change-me}
+      - DATABASE_URL=sqlite:///./data/monitor.db
+    volumes:
+      - ./data:/app/data
+      - ./portal:/app/portal
+    restart: unless-stopped
